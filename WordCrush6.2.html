@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>单词消消乐</title>
+    <style>
+        body {
+            background-color: #ADD8E6;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            user-select: none;
+        }
+        
+        #menu, #game {
+            padding: 20px;
+            text-align: center;
+        }
+
+        .title {
+            background-color: green;
+            color: white;
+            padding: 20px;
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 30px;
+        }
+
+        .day-btn {
+            background-color: green;
+            color: white;
+            padding: 15px 30px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .day-btn:active {
+            transform: scale(0.95);
+        }
+
+        .bubble {
+            background-color: #FFB6C1;
+            color: white;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 3px 3px 5px rgba(0,0,0,0.3);
+            width: 120px;
+            height: 120px;
+            font-weight: bold;
+            font-size: 20px;
+            transition: all 0.2s;
+        }
+
+        .bubble:active {
+            transform: scale(0.95);
+        }
+
+        .selected {
+            background-color: #FF69B4;
+            box-shadow: 0 0 15px rgba(255,105,180,0.5);
+        }
+
+        #status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            font-size: 1.2em;
+            background: rgba(255,255,255,0.2);
+            margin: 10px;
+            border-radius: 10px;
+        }
+
+        .settings-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+
+        #gameEnd {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.2);
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .end-btn {
+            padding: 10px 20px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background: green;
+            color: white;
+        }
+
+        @media (max-width: 600px) {
+            .bubble {
+                width: 80px;
+                height: 80px;
+                min-width: 80px;
+                min-height: 80px;
+                font-size: 14px !important;
+                margin: 5px;
+            }
+            
+            #status {
+                flex-direction: column;
+                gap: 10px;
+                font-size: 1em;
+            }
+        }
+    </style>
+    <!-- 引入 xlsx 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div id="menu">
+        <div class="title">单词消消乐</div>
+
+        <!-- 上传单词库按钮 -->
+        <input type="file" id="wordFileInput" accept=".xlsx, .xls" style="display: none;">
+        <button class="day-btn" onclick="document.getElementById('wordFileInput').click()">上传单词库</button>
+
+        <!-- 动态生成的关卡按钮 -->
+        <div id="levelButtons"></div>
+    </div>
+
+    <div id="game" style="display: none;">
+        <div class="title" id="levelTitle"></div>
+        <div id="status">
+            <div>积分: <span id="score">0</span></div>
+            <button class="settings-btn" onclick="setBubbleCount()">设置泡泡数量</button>
+            <div>剩余时间: <span id="timer">180</span>秒</div>
+        </div>
+        <div id="bubbles"></div>
+    </div>
+
+    <!-- 音效文件 -->
+    <audio id="xiaochu" src="xiaochu.mp3"></audio>
+
+<script>
+// 默认单词库（替换为你发送的文件内容）
+let words = {
+    1: [
+        ["one", "一"],
+        ["two", "二"]
+    ],
+    2: [
+        ["three", "三"],
+        ["four", "四"]
+    ]
+};
+
+const config = {
+    bubbleCount: 30
+};
+
+let currentLevel = 1;
+let totalScore = 0;
+let currentLevelScore = 0; // 记录当前关卡的积分
+let timer;
+let timeLeft;
+let selected = [];
+let remainingWords = [];
+let startTime;
+let gameActive = true;
+
+// 获取音效元素
+const xiaochuSound = document.getElementById("xiaochu");
+
+// 动态生成关卡按钮
+function updateLevelButtons(levelCount) {
+    const levelButtons = document.getElementById("levelButtons");
+    levelButtons.innerHTML = ""; // 清空现有的关卡按钮
+
+    for (let i = 1; i <= levelCount; i++) {
+        const button = document.createElement("button");
+        button.className = "day-btn";
+        button.textContent = `Day${i}`;
+        button.onclick = () => startGame(i);
+        levelButtons.appendChild(button);
+    }
+}
+
+// 上传 Excel 文件并解析
+document.getElementById("wordFileInput").addEventListener("change", function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+
+        // 解析 Excel 文件
+        const newWords = {};
+        workbook.SheetNames.forEach((sheetName, index) => {
+            const sheet = workbook.Sheets[sheetName];
+            const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            const wordPairs = json.slice(1).map(row => [row[0], row[1]]); // 忽略表头
+            newWords[index + 1] = wordPairs; // 每个 Sheet 对应一关
+        });
+
+        words = newWords; // 更新单词库
+        alert("单词库上传成功！");
+        updateLevelButtons(workbook.SheetNames.length); // 根据 Sheet 数目生成关卡按钮
+    };
+    reader.readAsArrayBuffer(file);
+});
+
+// 初始化关卡按钮（默认 2 关）
+updateLevelButtons(2);
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+//
+function setBubbleCount() {
+    const input = prompt("请输入泡泡数量（2-30之间的偶数）：", config.bubbleCount);
+    const newCount = parseInt(input);
+    
+    if (!isNaN(newCount)) {
+        if (newCount >= 2 && newCount <= 30 && newCount % 2 === 0) {
+            config.bubbleCount = newCount;
+            if (gameActive) {
+                remainingWords = shuffleArray([...words[currentLevel]]);
+                generateBubbles();
+            }
+        } else {
+            alert("请输入2到30之间的偶数！");
+        }
+    }
+}
+
+function startGame(level) {
+    gameActive = true;
+    currentLevel = level;
+    remainingWords = shuffleArray([...words[level]]);
+    currentLevelScore = 0; // 重置当前关卡积分
+    timeLeft = 180;
+    startTime = Date.now();
+    
+    document.getElementById("menu").style.display = "none";
+    document.getElementById("game").style.display = "block";
+    document.getElementById("levelTitle").textContent = `Day${level}`;
+    document.getElementById("score").textContent = totalScore;
+    document.getElementById("timer").textContent = timeLeft;
+    
+    const bubblesContainer = document.getElementById("bubbles");
+    bubblesContainer.innerHTML = "";
+    
+    generateBubbles();
+    startTimer();
+}
+
+function createBubble(text) {
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    return bubble;
+}
+
+function adjustFontSize(element) {
+    const maxWidth = element.offsetWidth - 20;
+    let fontSize = 20;
+    
+    const testElement = document.createElement("div");
+    testElement.style.position = "absolute";
+    testElement.style.visibility = "hidden";
+    testElement.style.whiteSpace = "nowrap";
+    testElement.style.fontSize = fontSize + "px";
+    testElement.textContent = element.textContent;
+    document.body.appendChild(testElement);
+    
+    while (testElement.offsetWidth > maxWidth && fontSize > 12) {
+        fontSize -= 1;
+        testElement.style.fontSize = fontSize + "px";
+    }
+    
+    document.body.removeChild(testElement);
+    element.style.fontSize = fontSize + "px";
+}
+
+function generateBubbles() {
+    const container = document.getElementById("bubbles");
+    container.innerHTML = ""; // 清空现有的泡泡
+    const neededPairs = Math.min(config.bubbleCount / 2, remainingWords.length);
+    const selectedPairs = remainingWords.splice(0, neededPairs);
+    
+    const bubbleElements = [];
+    selectedPairs.forEach(pair => {
+        const enBubble = createBubble(pair[0]);
+        const cnBubble = createBubble(pair[1]);
+        bubbleElements.push(enBubble, cnBubble);
+    });
+
+    shuffleArray(bubbleElements).forEach(bubble => {
+        bubble.onclick = () => gameActive && handleClick(bubble);
+        container.appendChild(bubble);
+        adjustFontSize(bubble);
+    });
+}
+
+function handleClick(bubble) {
+    if (selected.length >= 2 || bubble.classList.contains("selected")) return;
+
+    // 移除点击音效
+    bubble.classList.add("selected");
+    selected.push(bubble);
+
+    if (selected.length === 2) {
+        setTimeout(() => checkMatch(), 500);
+    }
+}
+
+function checkMatch() {
+    const [b1, b2] = selected;
+    const text1 = b1.textContent;
+    const text2 = b2.textContent;
+    
+    const isMatch = words[currentLevel].some(pair => 
+        (pair[0] === text1 && pair[1] === text2) ||
+        (pair[0] === text2 && pair[1] === text1)
+    );
+
+    if (isMatch) {
+        // 播放消除音效
+        xiaochuSound.currentTime = 0; // 重置音效播放时间
+        xiaochuSound.play();
+
+        totalScore += 30;
+        currentLevelScore += 30; // 增加当前关卡积分
+        selected.forEach(b => b.remove());
+        if (document.querySelectorAll(".bubble").length === 0) {
+            if (remainingWords.length > 0) {
+                generateBubbles();
+            } else {
+                endGame(true);
+            }
+        }
+    } else {
+        totalScore = Math.max(0, totalScore - 10);
+        currentLevelScore = Math.max(0, currentLevelScore - 10); // 扣除当前关卡积分
+        selected.forEach(b => b.classList.remove("selected"));
+    }
+    
+    document.getElementById("score").textContent = totalScore;
+    selected = [];
+}
+
+function startTimer() {
+    if (timer) clearInterval(timer);
+    
+    timer = setInterval(() => {
+        if (!gameActive) return;
+        
+        timeLeft--;
+        document.getElementById("timer").textContent = timeLeft;
+        
+        if (timeLeft <= 0) {
+            endGame(false);
+        }
+    }, 1000);
+}
+
+function endGame(success) {
+    gameActive = false;
+    clearInterval(timer);
+    
+    const timeBonus = success ? Math.floor(timeLeft / 10) : 0;
+    totalScore += timeBonus;
+    currentLevelScore += timeBonus; // 增加当前关卡的时间奖励
+    
+    const endDiv = document.createElement("div");
+    endDiv.id = "gameEnd";
+    endDiv.innerHTML = `
+        <h2>${success ? "恭喜你挑战成功！" : "太遗憾了，再玩一次吧！"}</h2>
+        ${success && currentLevel < Object.keys(words).length ? 
+            `<button class="end-btn" onclick="nextLevel()">下一关</button>` : 
+            ""}
+        ${currentLevel === Object.keys(words).length ? `
+            <p>总积分: ${totalScore}</p>
+            <p>总用时: ${Math.floor((Date.now() - startTime)/1000)}秒</p>
+            <button class="end-btn" onclick="backToMenu()">回到菜单</button>
+        ` : ""}
+        <button class="end-btn" onclick="retry()">再玩一次</button>
+    `;
+    
+    document.body.appendChild(endDiv);
+}
+
+function nextLevel() {
+    document.getElementById("gameEnd").remove();
+    currentLevel++;
+    startGame(currentLevel);
+}
+
+function retry() {
+    // 扣除当前关卡积分
+    totalScore -= currentLevelScore;
+    document.getElementById("gameEnd").remove();
+    startGame(currentLevel);
+}
+
+function backToMenu() {
+    document.getElementById("gameEnd").remove();
+    document.getElementById("game").style.display = "none";
+    document.getElementById("menu").style.display = "block";
+    totalScore = 0;
+}
+
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+</script>
+</body>
+</html>
